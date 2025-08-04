@@ -1,0 +1,126 @@
+---
+title: "MSDS 6371 Final Project Appendix"
+author: "Sue Camara"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(boot)
+library(car)
+library(shiny)
+```
+
+## Data Preparation
+
+```{r}
+# Load training data
+traindf <- read.csv("C:/Users/sueca/Downloads/train.csv")
+
+# Cleaned dataset for modeling
+df <- traindf %>%
+  select(SalePrice, GrLivArea, FullBath, GarageCars, OverallQual) %>%
+  drop_na()
+```
+
+## Analysis 1 – Neighborhood Model
+
+```{r}
+neighborhood_df <- traindf %>%
+  filter(Neighborhood %in% c("NAmes", "Edwards", "BrkSide")) %>%
+  mutate(
+    GrLivArea100 = GrLivArea / 100,
+    Neighborhood = factor(Neighborhood),
+    Neighborhood = relevel(Neighborhood, ref = "NAmes")
+  )
+
+model1 <- lm(SalePrice ~ GrLivArea100 * Neighborhood, data = neighborhood_df)
+summary(model1)
+confint(model1)
+
+par(mfrow = c(2, 2))
+plot(model1)
+influencePlot(model1)
+```
+
+## Analysis 2 – Predictive Models
+
+```{r}
+model_slr <- lm(SalePrice ~ GrLivArea, data = df)
+model_mlr1 <- lm(SalePrice ~ GrLivArea + FullBath, data = df)
+model_mlr2 <- lm(SalePrice ~ GrLivArea + FullBath + GarageCars + OverallQual, data = df)
+
+summary(model_slr)$adj.r.squared
+summary(model_mlr1)$adj.r.squared
+summary(model_mlr2)$adj.r.squared
+
+AIC(model_slr)
+AIC(model_mlr1)
+AIC(model_mlr2)
+
+cv_press <- function(model, data) {
+  press <- cv.glm(data, model)
+  return(press$delta[1])
+}
+cv_press(model_slr, df)
+cv_press(model_mlr1, df)
+cv_press(model_mlr2, df)
+```
+
+## Kaggle Submission
+
+```{r}
+testdf <- read.csv("C:/Users/sueca/Downloads/test.csv")
+testdf$GarageCars[is.na(testdf$GarageCars)] <- median(df$GarageCars, na.rm = TRUE)
+
+predictions <- predict(model_mlr2, newdata = testdf)
+submission <- data.frame(Id = testdf$Id, SalePrice = predictions)
+write.csv(submission, "submission.csv", row.names = FALSE)
+```
+
+## R Shiny App Code
+
+```{r eval=FALSE}
+library(shiny)
+library(tidyverse)
+
+df <- read.csv("C:/Users/sueca/Downloads/train.csv") %>%
+  filter(Neighborhood %in% c("NAmes", "Edwards", "BrkSide"))
+
+ui <- fluidPage(
+  titlePanel("Ames Housing: Sale Price vs. Living Area"),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("neigh", "Select Neighborhood:",
+                  choices = c("NAmes", "Edwards", "BrkSide"),
+                  selected = "NAmes")
+    ),
+    mainPanel(
+      plotOutput("scatterPlot"),
+      br(),
+      helpText("This plot shows the relationship between Sale Price and Living Area for selected neighborhoods.")
+    )
+  )
+)
+
+server <- function(input, output) {
+  filteredData <- reactive({
+    df %>% filter(Neighborhood == input$neigh)
+  })
+
+  output$scatterPlot <- renderPlot({
+    ggplot(filteredData(), aes(x = GrLivArea, y = SalePrice)) +
+      geom_point(alpha = 0.6, color = "steelblue") +
+      geom_smooth(method = "lm", se = FALSE, color = "darkred") +
+      labs(
+        title = paste("Sale Price vs Living Area in", input$neigh),
+        x = "Above Ground Living Area (sq ft)",
+        y = "Sale Price"
+      ) +
+      theme_minimal()
+  })
+}
+
+shinyApp(ui = ui, server = server)
+```
